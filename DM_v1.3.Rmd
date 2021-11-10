@@ -1,0 +1,422 @@
+---
+title: "DM_Project_1"
+author: "Abram Chan, Falomy Eugene, Yan Qi"
+date: "10/28/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+##Import libraries here:
+```{r}
+library(e1071)
+library(tidyverse)
+library(ggplot2)
+library(ggExtra)
+library(gridExtra)
+library(dplyr)
+library(e1071)
+library(pROC)
+library(ROCit)
+library(naivebayes)
+library(psych)
+library(caret)
+library(regclass)
+library(rpart)
+library(rpart.plot)
+library(splitstackshape)
+library(caTools)
+#ignore the warning below or unshow the warnings by run this chunk twice
+```
+##Major reason choosing R: EDA for this assignment requires a high level of customization, particularly for outliers' detection(Q5) and imputation(Q7).
+
+##Import 'census' dataset
+```{r}
+raw <- read.csv("C:/Users/Abram/Desktop/AFF/SMU/2021Fall/ModB/DM/ASSIGNMENT_1/adult.csv")
+
+#preview dataset
+summary(raw)
+str(raw)
+head(raw)
+```
+##Answer for the Q1: 32560 observations(rows) and 15 variables(columns)
+
+##From the results above, we can tell that the existing dataset does not contains col names, thus, we want to ssign the col names here:
+```{r}
+names(raw)<-c('age','workclass','fnlwgt','education','education_num','marital_status','occupation','relationship','race','sex','capital_gain','capital_loss','hours_per_week','native_country', 'income')
+
+head(raw)
+```
+
+##Since the variable fnlwgt is an observation multiplier, we want to modify the dataset here:
+```{r}
+#We want to rescale the dataset by 10k rather than directly multiplying, since if then, the we would have over 6 billions obs
+raw$fnlwgt <- sapply(raw$fnlwgt, function(x) x/10000)
+raw <- expandRows(raw, "fnlwgt")
+
+str(raw)
+```
+##After the multiplication, the obs number is 601547, we droped the multiplication col fnlwgt, thus, we have 14 cols here.
+
+##Return a table with variable names & types
+```{r}
+table_name <- names(raw)
+table_ty <- data.frame(matrix(nrow=1, ncol=1))
+
+colnames(table_ty) <- c('type')
+for (i in table_name) {
+  name <- typeof(raw[,i])
+  table_ty <- table_ty %>%
+    add_row(type = name)
+}
+
+table_ty <- table_ty[-1,]
+type <- data.frame(table_name,table_ty)
+names(type) <- c('variable', 'type')
+
+#Table
+type
+```
+##Answer for the Q2: Tables of variables with their types can be shown above.
+
+##Return the table of statistics for specific cols
+```{r}
+var <- c("age", "education_num", "capital_gain", "capital_loss", "hours_per_week")
+
+calstats <- function(x) {
+  miss <- sum(is.na(x))
+  min <- round(min(x,na.rm=TRUE), 2)
+  max <- round(max(x,na.rm = TRUE), 2)
+  median <- round(median(x, na.rm = TRUE), 2)
+  mean <- round(mean(x, na.rm = TRUE), 2)
+  sd <- round(sd(x,na.rm = TRUE), 2)
+  skew <- round(skewness(x,na.rm=TRUE), 2)
+  kurt <- round(kurtosis(x,na.rm=TRUE), 2)
+  result <- data.frame(miss, min, max, median, mean, sd, skew, kurt)
+                    
+}
+
+rslt <- data.frame(matrix(nrow=0, ncol=8))
+colnames(rslt) <- c('miss', 'min', 'max', 'median', 'mean', 'sd', 'skew', 'kurt')
+
+for (i in var) {
+  result <- calstats(raw[,i])
+  rslt <- rslt %>%
+    add_row(result)
+}
+
+rownames(rslt) <- c("age", "education_num", "capital_gain", "capital_loss", "hours_per_week")
+
+#table
+rslt
+
+length(unique(raw$education_num))
+```
+##Answer for the Q3: since for the col 'education_num', there're only 16 distinct values, based on the fact that the col is about the years of education for each observation, 16 could be defined as 'few distinct value', thus, we want to convert this col into categorical. We will change this col to character first for the convenience of graph and to factor right before the models building part.
+##Answer for the Q4: table of statistics can be shown above 'rslt'.
+
+##Convert datatype for col 'education_num'
+```{r}
+raw$education_num <- as.character(raw$education_num)
+summary(raw$education_num)
+```
+
+##Identify the numeric cols for which outlier detection is desired(col 'education_num' was originally numeric, we changed it into character in Q3)
+##col 'fnlwgt' is numeric, however, given its attribute is multiplier, we do not want to include this col in the outlier and model part.
+```{r}
+#str(raw)
+out <- c("age", "capital_gain", "capital_loss", "hours_per_week")
+
+str(raw)
+```
+
+##Identify outliers using 'boxplot.stats'
+```{r}
+var_1 <- c("age", "capital_gain", "capital_loss", "hours_per_week")
+outliers <- c()
+for (i in var_1) {
+  outliers <- c(outliers,length(boxplot.stats(raw[,i])$out))
+}
+
+#summary(raw)
+
+data.frame(var_1,outliers)
+```
+##Answer for the Q5: Specific outliers counts can be shown at the table above
+
+##Answers for the Q6 and Q7: see below steps
+
+##Imputation for outliers(Be adivesd, assignment requirements pointed out for this step, specific presentation and introduction for the imputations are needed)
+
+##After we check the original dataset, we noticed that the max and min for col 'age' are 99 and 1, the outliers that boxplot generated are in range of [79,90], from real life perspectives, we do not recognize these numbers are outliers, since its not uncommon for humen live up to 90, thus, we want to exclude col 'age' in the following outliers imputations
+
+
+##We want to direct impute value for col 'hours_per_week' since there're two ranges of outliers(set them to missing first may cause issues assigning values, detailed explanation seen below steps)
+
+##We found out there should be a collinearity between col 'education' and 'education-num', thus, we intend to use 'education' instead of 'education_num' in the model. We do not impute values for the missings of col 'education_num'
+
+##'Capital-gain' and 'Capital_loss': we decide not include these two cols since they have too many zero-values
+
+##Imputation for outliers
+```{r}
+#For hours_per_week, since the outliers detected by the 'boxplot.stats' contains over 162095 records, given the 601547 observations that the original dataset provides, the outliers detected occupies more than 27% of the original volume. Thus we want to manually replace the outliers, details see below:
+
+#The outliers range is between[1,17] & [79,99], these numbers are somehow not extinct in real working scenarios, however, through boxplot we can say that these outliers presented a flat distribution compared to the box itsself, which will do harm to the models we are about to build, thus, we replaced outliers in [1,17] with the average of values in range [1,17] and [79,99] with the values average in range [79,99].
+
+#unique(boxplot.stats(raw$hours_per_week)$out)
+
+hpwo_c<-boxplot.stats(raw$hours_per_week)$out
+
+raw$hours_per_week[raw$hours_per_week > 78] <- round(mean(Filter(function(x) any(x > 78), hpwo_c)))
+raw$hours_per_week[raw$hours_per_week < 18] <- round(mean(Filter(function(x) any(x < 18), hpwo_c)))
+
+summary(raw$hours_per_week)
+```
+
+##Return the table for the count of distince values for char vars
+```{r}
+data_type <- data.frame(unlist(sapply(raw,class)))
+colnames(data_type)[1] <- "Variable Type"
+
+cha <- c()
+for (i in rownames(data_type)) {
+  if (data_type[i,] == "character") {
+    cha <- c(cha, i)} 
+  else {cha}
+}
+
+cnt <- c()
+for (i in cha) {
+  new_cnt <- length(unique(raw[,i]))
+  cnt <- c(cnt, new_cnt)
+}
+
+all_char <- data.frame(var = cha, cnt_uni = cnt)
+
+all_char
+
+```
+##Answer for the Q6: table seen above, there're no unsual values in categorical cols
+
+##Plot histogram for each of the numeric variables.
+```{r}
+par(mfrow=c(1,2))
+
+hist(raw$age, main="Histogram of Age", xlab="age", col = "#FF6666")
+#hist(raw$fnlwgt, main="Histogram of fnlwgt", xlab="fnlwgt", col = "#FF6666")
+#hist(raw$education_num,  main="Histogram of education_num", xlab="education_num")
+#hist(raw$capital_gain, main="Histogram of capital_gain", xlab="capital_gain")
+#hist(raw$capital_loss, main="Histogram of capital_loss", xlab="capital_loss", col = "#FF6666")
+hist(raw$hours_per_week, main="Histogram of hours_per_week", xlab="hours_per_week", col = "#FF6666")
+
+#No sweat for the graph size here, 4 in 1 graph was only intended for the test run.
+#If you want to see the graph bigger, feel free to run each one of them by highlighting the specific line
+#OR print out in console to change to any size you want
+```
+##Answer for the Q8: graph seen above
+
+##Bar chart for each of the categorical variables
+```{r}
+ggplot(raw, aes(x = workclass)) + geom_bar(fill = "#FF6666")
+ggplot(raw, aes(x = education)) + geom_bar(fill = "#FF6666")
+ggplot(raw, aes(x = marital_status)) + geom_bar(fill = "#FF6666")
+ggplot(raw, aes(x = occupation)) + geom_bar(fill = "#FF6666")
+ggplot(raw, aes(x = relationship)) + geom_bar(fill = "#FF6666")
+ggplot(raw, aes(x = race)) + geom_bar(fill = "#FF6666")
+ggplot(raw, aes(x = sex)) + geom_bar(fill = "#FF6666")
+ggplot(raw, aes(x = native_country)) + geom_bar(fill = "#FF6666")
+ggplot(raw, aes(x = income)) + geom_bar(fill = "#FF6666")
+ggplot(raw, aes(x = education_num)) + geom_bar(fill = "#FF6666")
+
+#No sweat for the graph size here, these graphs were only intended for the test run.
+#If you want to see the graph bigger, feel free to run each one of them by highlighting the specific line and 'ctrl'+'Enter'
+#OR print out in console to change to any size you ant
+```
+##Answer for the Q9: seen above
+
+##Before we jump into the model part, we want to first modify our data types here:
+```{r}
+#Specific cols need to be changed to factor
+raw$workclass <- as.factor(raw$workclass)
+raw$education <- as.factor(raw$education)
+raw$marital_status <- as.factor(raw$marital_status)
+raw$occupation <- as.factor(raw$occupation)
+raw$relationship <- as.factor(raw$relationship)
+raw$race <- as.factor(raw$race)
+raw$sex <- as.factor(raw$sex)
+raw$native_country <- as.factor(raw$native_country)
+raw$income <- as.factor(raw$income)
+raw$education_num <- as.factor(raw$education_num)
+```
+
+##Output file(Optional)
+```{r}
+#write.csv(raw,"C:\\Users\\Abram\\Desktop\\raw.csv", row.names = FALSE)
+```
+
+##Create a new dataframe based on the specific cols we intended to input in our following process
+```{r}
+df <- raw[,c("age","workclass","education","marital_status","occupation","relationship","race","sex","hours_per_week","income")]
+str(df)
+```
+
+##Model01(Q10): Naïve Bayes Model
+```{r}
+#This step we partition the data into a training set (70%) and a validation set (30%)
+set.seed(1234)
+split <- sample.split(df, SplitRatio = 0.7)
+train_data1 <- subset(df, split == "TRUE")
+test_data1 <- subset(df, split == "FALSE")
+
+str(train_data1)
+```
+
+```{r}
+#This step we use naive_bayes function in naivebayes library to train the model
+model_nb <- naive_bayes(income ~ ., data = train_data1) 
+plot(model_nb)
+#Through the following graphs, we can identify which col(s)' success chances(prob) given the condition of response variable, if u feel these graphs hard to perceive, no sweat, these graphs are only used for me to further the speculation and model building, not intended for the presentation.
+```
+
+```{r}
+#This step we use the model_nb that we built in the last step to predict income(using the test dataset)
+p_nb <- predict(model_nb,newdata=test_data1,type="prob")[,2]
+p_nb_df <-cbind(p_nb, test_data1)
+p_nb_df_s <- p_nb_df[order(p_nb),]
+tail(p_nb_df_s,10)
+```
+
+```{r}
+#This step we check the statistics of the model_nb and graph the ROC curve
+roc(test_data1$income,p_nb)
+plot(roc(test_data1$income,p_nb))
+```
+
+```{r}
+#This step we provide the accuracy, misclassification rate, true positive rate, false positive rate, specificity, precision, and prevalence statistics.
+classifications <- predict(model_nb,newdata=test_data1)
+confusionmatrix <- confusionMatrix(classifications,test_data1$income, positive = " >50K")
+nb_cm <- data.frame(matrix(ncol = 1,nrow = 7))
+rownames(nb_cm) <- c('accuracy', 'misclassification', 'true positive', 'false positive', 'specificity', 'precision' ,'prevalence.')
+
+colnames(nb_cm) <- 'values'
+nb_cm['accuracy',1] <- confusionmatrix$overall[1]
+nb_cm['misclassification',1] <- 1 - confusionmatrix$overall[1]
+nb_cm['true positive',1] <- 30041/(16903+30041)
+nb_cm['false positive',1] <- 13271/(13271+120250)
+nb_cm['specificity',1] <- confusionmatrix$byClass[2]
+nb_cm['precision',1] <- confusionmatrix$byClass[5]
+nb_cm['prevalence.',1] <- confusionmatrix$byClass[8]
+
+nb_cm
+```
+
+##Model02(Q11): Logit Model
+```{r}
+#Based on the training data build logistic model
+logit <- glm(income~., data = train_data1, family = "binomial")
+summary(logit)
+varImp(logit)
+```
+
+```{r}
+1-pchisq(462006-275533, 421081-421026)
+```
+```{r}
+#This step provide the testing for the logit model as well as roc statistics
+p_glm <- predict(logit,newdata = test_data1)
+roc(test_data1$income,p_glm)
+plot(roc(test_data1$income,p_glm))
+```
+
+```{r}
+#This step we provide the accuracy, misclassification rate, true positive rate, false positive rate, specificity, precision, and prevalence statistics.
+confusion_matrix(logit,test_data1)
+glm_cm <- nb_cm
+
+glm_cm['accuracy',1] <- (127057+26000)/180465
+glm_cm['misclassification',1] <- 1 - (127057+26000)/180465
+glm_cm['true positive',1] <- 26000/43312
+glm_cm['false positive',1] <- 10096/137153      
+glm_cm['specificity',1] <- 26000/43312           
+glm_cm['precision',1] <- 26000/36096
+glm_cm['prevalence.',1] <- 43312/180465
+glm_cm
+```
+
+##Model02(Q12): Decision Tree
+```{r}
+#Based on the training data building model
+dc <- rpart(income~.,data=train_data1)
+```
+
+```{r}
+#This step first check the significance of different variables in the dc(model) and plot the decision Tree
+varImp(dc)
+#visualize_model(dc)
+rpart.plot(dc, box.palette="RdBu", shadow.col="gray", nn=TRUE)
+```
+
+```{r}
+#This step check the roc statsitics as well as plot the roc curve
+roc(test_data1$income,predict(dc,newdata=test_data1,type="prob")[,2])
+plot(roc(test_data1$income,predict(dc,newdata=test_data1,type="prob")[,2]))
+```
+
+```{r}
+#This step we provide the accuracy, misclassification rate, true positive rate, false positive rate, specificity, precision, and prevalence statistics.
+classifications_Tree <- predict(dc,newdata=test_data1,type='class')
+matrix_tree <- confusionMatrix(classifications_Tree, test_data1$income,positive =' >50K') 
+
+metrics_tree <- nb_cm
+metrics_tree['accuracy',1] <- matrix_tree$overall[1]
+metrics_tree['misclassification',1] <- 1 - matrix_tree$overall[1]
+metrics_tree['true positive',1] <- 23160/(23160+10414)
+metrics_tree['false positive',1] <- 20152/(20152+126739)
+metrics_tree['specificity',1] <- matrix_tree$byClass[2]
+metrics_tree['precision',1] <- matrix_tree$byClass[5]
+metrics_tree['prevalence.',1] <- matrix_tree$byClass[8]
+metrics_tree
+```
+
+##Model02(Q12): Random Forest
+```{r}
+#This step based on the training data build the random forest model
+#colnames(train)[9] <- "capital_gain"
+#colnames(test)[9] <- "capital_gain"
+
+model_rf <- randomForest(income~., data=train_data1, mtry=3,ntree=6) 
+varImp(model_rf) 
+#visualize_relationship(model_rf,interest="age",on=train_data1) 
+```
+
+```{r}
+#ROC Statistics
+roc(test_data1$income,predict(model_rf,newdata=test_data1,type="prob")[,2])
+plot(roc(test_data1$income,predict(model_rf,newdata=test_data1,type="prob")[,2]))
+```
+
+```{r}
+#This step we provide the accuracy, misclassification rate, true positive rate, false positive rate, specificity, precision, and prevalence statistics.
+classifications_rf <- predict(model_rf,newdata=test_data1,type='class') 
+matrix_rf <- confusionMatrix(classifications_rf, test_data1$income,positive=' >50K')
+
+metrics_rf <- nb_cm
+metrics_rf['accuracy',1] <- matrix_rf$overall[1]
+metrics_rf['misclassification',1] <- 1 - matrix_rf$overall[1]
+metrics_rf['true positive',1] <- 36250/(4467+36250)
+metrics_rf['false positive',1] <- 7062/(7062+132686)
+metrics_rf['specificity',1] <- matrix_rf$byClass[2]
+metrics_rf['precision',1] <- matrix_rf$byClass[5]
+metrics_rf['prevalence.',1] <- matrix_rf$byClass[8]
+metrics_rf
+```
+
+##performance table
+```{r}
+performance <- cbind(nb_cm, glm_cm, metrics_tree, metrics_rf)
+colnames(performance) <- c("Naive Bayes", "Logistical Regression", "Decision Tree", "Random Forest")
+performance["auc",] <- c(0.8945,0.9031,0.8243,0.9591)
+performance
+
+```
+##Yall all know which to pick now(Random Forest).
